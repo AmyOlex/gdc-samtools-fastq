@@ -12,4 +12,4 @@ cromwell-workflow-logs/
 
 # Ignore local configuration files
 cromwell.conf
-gdc_inputs_local.json
+local_inputs.json
