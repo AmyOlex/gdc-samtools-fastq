@@ -1,0 +1,9 @@
+version: 1.2
+workflows:
+  - name: gdc-samtools-fastq
+    subclass: WDL
+    primaryDescriptorPath: /gdc-samtools-fastq.wdl
+    testParameterFiles:
+      - /gdc_inputs.json
+    authors:
+      - name: Amy L Olex

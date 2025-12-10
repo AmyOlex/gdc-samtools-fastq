@@ -1,0 +1,5 @@
+{
+  "GDC_Samtools_Fastq.input_bam": "https://github.com/broadinstitute/gatk/raw/master/src/test/resources/org/broadinstitute/hellbender/tools/sam_to_fastq/aligned_queryname_sorted.bam",
+  "GDC_Samtools_Fastq.input_bam_index": "https://github.com/broadinstitute/gatk/raw/master/src/test/resources/org/broadinstitute/hellbender/tools/sam_to_fastq/aligned_queryname_sorted.bai"
+  "GDC_Samtools_Fastq.docker_image": "staphb/samtools:1.22"
+}

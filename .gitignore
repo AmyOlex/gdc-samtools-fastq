@@ -1,0 +1,18 @@
+# Ignore test data and large files
+test_data/
+*.bam
+*.bai
+*.fastq.gz
+*.sam
+
+# Ignore Dockstore/Cromwell logs and execution folders
+cromwell-executions/
+cromwell-workflow-logs/
+.dockstore/
+
+# Ignore system files
+.DS_Store
+
+# Ignore local configuration files
+cromwell.conf
+gdc_inputs_local.json
