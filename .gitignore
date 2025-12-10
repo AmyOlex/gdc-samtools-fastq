@@ -1,7 +1,4 @@
 # Ignore test data and large files
-test_data/
-*.bam
-*.bai
 *.fastq.gz
 *.sam
 
