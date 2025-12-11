@@ -137,3 +137,6 @@ Affiliation: Virginia Commonwealth University
 
 ## License: 
 [GNU General Public License v3.0](https://github.com/AmyOlex/gdc-samtools-fastq/blob/main/LICENSE)
+
+## Gen AI Disclaimer
+Gemini Pro in Thinking Mode using VCU's secure account was utilized in Dec 2025 to assist in the development of this workflow and writing of documentation. All code and documentation was manually reviewed, edited and tested by the author. 
