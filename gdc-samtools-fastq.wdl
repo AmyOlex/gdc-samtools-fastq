@@ -54,12 +54,17 @@ task IndexBam {
     String docker
   }
 
+  # Calculate basename so we can symlink with the correct original name
+  String filename = basename(bam)
+
   command <<<
     set -e
-    # Symlink the input to ensure it has a writable directory if needed, 
-    # though usually samtools index works fine on input. 
-    # We index the file in place.
-    samtools index "~{bam}"
+    # 1. Symlink input to current working directory
+    # This solves the issue of read-only input directories or missing sidecar files
+    ln -s "~{bam}" "~{filename}"
+    
+    # 2. Index the local symlink
+    samtools index "~{filename}"
   >>>
 
   runtime {
@@ -71,7 +76,7 @@ task IndexBam {
 
   output {
     # samtools index creates <filename>.bam.bai
-    File bai = "~{bam}.bai"
+    File bai = "~{filename}.bai"
   }
 }
 
@@ -83,15 +88,19 @@ task SplitBamByRG {
     String docker
   }
 
+  String filename = basename(bam)
+
   command <<<
     set -e
-    # We must explicitly localize the index next to the bam for samtools to find it
-    # WDL handles the file transfer, but we ensure they are in the same folder logic here.
-    mv "~{bai}" "~{bam}.bai"
+    # 1. Symlink BAM and BAI to current directory
+    # This forces them to exist side-by-side, which samtools requires
+    ln -s "~{bam}" "~{filename}"
+    ln -s "~{bai}" "~{filename}.bai"
 
+    # 2. Split using the local symlink
     # -f: Naming format (%* = original basename, %# = Read Group Index)
     # -u: Unaccounted reads (if any) go here
-    samtools split -f '%*_%#.bam' -u unassigned.bam ~{bam}
+    samtools split -f '%*_%#.bam' -u unassigned.bam "~{filename}"
   >>>
 
   runtime {
