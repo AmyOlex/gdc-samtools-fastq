@@ -3,21 +3,28 @@ version 1.0
 workflow GDC_Samtools_Fastq {
   input {
     File input_bam
-    File input_bam_index
     # DEFAULT FOR TERRA: Use the public, pinned version
     String docker_image = "staphb/samtools:1.22"
   }
 
-  # 1. Split the BAM by Read Group (RG)
+  # 1. Index BAM file
+  call IndexBam {
+    input:
+      bam = input_bam,
+      docker = docker_image
+  }
+  
+  
+  # 2. Split the BAM by Read Group (RG)
   # This is critical for GDC BAMs which often contain multiple lanes
   call SplitBamByRG {
     input:
       bam = input_bam,
-      bai = input_bam_index,
+      bai = IndexBam.bai,
       docker = docker_image
   }
 
-  # 2. Convert each split BAM into FASTQ pairs (Parallel Scatter)
+  # 3. Convert each split BAM into FASTQ pairs (Parallel Scatter)
   scatter (split_bam in SplitBamByRG.split_bams) {
     call BamToFastq {
       input:
@@ -32,7 +39,34 @@ workflow GDC_Samtools_Fastq {
   }
 }
 
-# TASK 1: Split BAM by Read Group
+# TASK 1: IndexBam {
+  input {
+    File bam
+    String docker
+  }
+
+  command <<<
+    set -e
+    # Symlink the input to ensure it has a writable directory if needed, 
+    # though usually samtools index works fine on input. 
+    # We index the file in place.
+    samtools index "~{bam}"
+  >>>
+
+  runtime {
+    docker: docker
+    memory: "4 GB"
+    cpu: 1
+    disks: "local-disk 50 HDD" # Ensure enough disk space for the BAM
+  }
+
+  output {
+    # samtools index creates <filename>.bam.bai
+    File bai = "~{bam}.bai"
+  }
+}
+
+# TASK 2: Split BAM by Read Group
 task SplitBamByRG {
   input {
     File bam
@@ -42,6 +76,10 @@ task SplitBamByRG {
 
   command <<<
     set -e
+    # We must explicitly localize the index next to the bam for samtools to find it
+    # WDL handles the file transfer, but we ensure they are in the same folder logic here.
+    mv "~{bai}" "~{bam}.bai"
+
     # -f: Naming format (%* = original basename, %# = Read Group Index)
     # -u: Unaccounted reads (if any) go here
     samtools split -f '%*_%#.bam' -u unassigned.bam ~{bam}
@@ -51,6 +89,7 @@ task SplitBamByRG {
     docker: docker
     memory: "4 GB"
     cpu: 2
+    disks: "local-disk 100 HDD"
   }
 
   output {
@@ -59,7 +98,7 @@ task SplitBamByRG {
   }
 }
 
-# TASK 2: Convert BAM to FASTQ
+# TASK 3: Convert BAM to FASTQ
 task BamToFastq {
   input {
     File bam
@@ -96,6 +135,7 @@ task BamToFastq {
     docker: docker
     memory: "8 GB" # Increased for safety with larger GDC files
     cpu: 2
+    disks: "local-disk 50 HDD"
   }
 
   output {

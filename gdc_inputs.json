@@ -1,5 +1,4 @@
 {
   "GDC_Samtools_Fastq.input_bam": "https://github.com/AmyOlex/gdc-samtools-fastq/blob/main/test_data/test_input.bam",
-  "GDC_Samtools_Fastq.input_bam_index": "https://github.com/AmyOlex/gdc-samtools-fastq/blob/main/test_data/test_input.bam.bai",
   "GDC_Samtools_Fastq.docker_image": "staphb/samtools:1.22"
 }
