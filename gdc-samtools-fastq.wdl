@@ -33,7 +33,7 @@ workflow GDC_Samtools_Fastq {
   }
 
   # 4. Merge the scattered FASTQ files into a single pairs
-  call MergeFastqs{
+  call MergeFastqs {
     input:
       r1_files = BamToFastq.r1,
       r2_files = BamToFastq.r2,
@@ -47,7 +47,8 @@ workflow GDC_Samtools_Fastq {
   }
 }
 
-# TASK 1: IndexBam {
+# TASK 1: Index BAM file
+task IndexBam {
   input {
     File bam
     String docker
