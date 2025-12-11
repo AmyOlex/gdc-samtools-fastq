@@ -14,7 +14,6 @@ workflow GDC_Samtools_Fastq {
       docker = docker_image
   }
   
-  
   # 2. Split the BAM by Read Group (RG)
   # This is critical for GDC BAMs which often contain multiple lanes
   call SplitBamByRG {
@@ -33,9 +32,18 @@ workflow GDC_Samtools_Fastq {
     }
   }
 
+  # 4. Merge the scattered FASTQ files into a single pairs
+  call MergeFastqs{
+    input:
+      r1_files = BamToFastq.r1,
+      r2_files = BamToFastq.r2,
+      base_name = basename(input_bam, ".bam"),
+      docker = docker_image
+  }
+
   output {
-    Array[File] r1_fastqs = BamToFastq.r1
-    Array[File] r2_fastqs = BamToFastq.r2
+    File merged_r1 = MergeFastqs.merged_r1
+    File merged_r2 = MergeFastqs.merged_r2
   }
 }
 
@@ -141,5 +149,34 @@ task BamToFastq {
   output {
     File r1 = "~{basename}_R1.fastq.gz"
     File r2 = "~{basename}_R2.fastq.gz"
+  }
+}
+
+# TASK 4: Merge Fastq files
+task MergeFastqs {
+  input {
+    Array[File] r1_files
+    Array[File] r2_files
+    String base_name
+    String docker
+  }
+
+  command <<<
+    set -e
+    # Concatenate the gzipped files (valid for bgzip/gzip)
+    cat ~{sep=" " r1_files} > "~{base_name}_R1.fastq.gz"
+    cat ~{sep=" " r2_files} > "~{base_name}_R2.fastq.gz"
+  >>>
+
+  runtime {
+    docker: docker
+    memory: "4 GB"
+    cpu: 1
+    disks: "local-disk 100 HDD"
+  }
+
+  output {
+    File merged_r1 = "~{base_name}_R1.fastq.gz"
+    File merged_r2 = "~{base_name}_R2.fastq.gz"
   }
 }
