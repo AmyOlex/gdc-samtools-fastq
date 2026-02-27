@@ -1,31 +1,62 @@
 # gdc-samtools-fastq
 
-A WDL pipeline to convert GDC BAM files to fastq format utilizing GDC recommended options.  For execution on Terra.bio.
+A WDL pipeline to convert GDC BAM files to fastq format utilizing GDC recommended options. For execution on Terra.bio.
 
 # GDC Samtools FASTQ Workflow
 This WDL workflow converts aligned BAM files back into paired-end FASTQ format, adhering to GDC Data Harmonization standards. It is designed to run locally using the Dockstore CLI or in the cloud on Terra/AnVIL.
 
+## Version History
+
+- **v2.0 (HTTPS Download Edition):** Downloads BAM files directly from the GDC HTTPS API, bypassing DRS/GCS resolution. Use this version if DRS resolution is failing on Terra due to broken GDC GCS buckets. Adds configurable resource settings and preemptible VM support.
+- **v1.x (DRS/GCS Edition):** Uses Terra's built-in DRS resolution to access BAM files via Google Cloud Storage. Recommended when GDC GCS buckets are functional.
+
 ## Overview
 
 The workflow performs the following steps:
- 1) **Indexes BAM:** Automatically generates a .bai index for the input BAM.
- 2) **Splits BAM by Read Group:** Detects @RG tags in the BAM header and splits the file into separate BAMs for each read group (lane).
- 3) **Restores Original Qualities:** Uses samtools fastq -O to restore original quality scores (OQ tag) if they were recalibrated.
- 4) **Parallel Conversion:** Converts each split BAM into paired FASTQ files (R1 and R2) in parallel.
- 5) **Merges Output:** Concatenates all split FASTQ files into a single pair (merged_R1.fastq.gz, merged_R2.fastq.gz) for easy downstream use.
+ 1) **Downloads BAM (v2.0):** Downloads the BAM file directly from the GDC HTTPS API using your GDC authentication token.
+ 2) **Indexes BAM:** Automatically generates a .bai index for the input BAM.
+ 3) **Splits BAM by Read Group:** Detects @RG tags in the BAM header and splits the file into separate BAMs for each read group (lane).
+ 4) **Restores Original Qualities:** Uses samtools fastq -O to restore original quality scores (OQ tag) if they were recalibrated.
+ 5) **Parallel Conversion:** Converts each split BAM into paired FASTQ files (R1 and R2) in parallel.
+ 6) **Merges Output:** Concatenates all split FASTQ files into a single pair (merged_R1.fastq.gz, merged_R2.fastq.gz) for easy downstream use.
 
 ## Requirements
 
  - **WDL Version:** 1.0
  - **Docker Image:** staphb/samtools:1.22 (default)
  - **Executor:** [Cromwell](https://github.com/broadinstitute/cromwell) (via Dockstore CLI or Terra)
+ - **GDC Token (v2.0):** A valid authentication token from the [GDC Data Portal](https://portal.gdc.cancer.gov/) (download under your user profile). Tokens expire periodically and must be refreshed.
 
 ## Inputs
 
+### v2.0 (HTTPS Download Edition)
+
 Input Name | Type | Description
 | :--- | :--- | :--- |
-GDC_Samtools_Fastq.input_bam | File | The aligned BAM file to convert. Must contain @RG (Read Group) headers.
-GDC_Samtools_Fastq.docker_image | String | (Optional) Docker image to use. Default: staphb/samtools:1.22. Use staphb/samtools:latest for local dev if needed.
+GDC_Samtools_Fastq.sample_id | String | DRS URI (e.g. `drs://dg.4DFC:008b411e-...`) or bare UUID for the GDC BAM file.
+GDC_Samtools_Fastq.gdc_token | File | GDC authentication token file for HTTPS downloads.
+GDC_Samtools_Fastq.docker_image | String | (Optional) Docker image to use. Default: `staphb/samtools:1.22`.
+
+### v1.x (DRS/GCS Edition)
+
+Input Name | Type | Description
+| :--- | :--- | :--- |
+GDC_Samtools_Fastq.input_bam | File | The aligned BAM file to convert. Accepts DRS URIs or gs:// paths. Must contain @RG (Read Group) headers.
+GDC_Samtools_Fastq.docker_image | String | (Optional) Docker image to use. Default: `staphb/samtools:1.22`.
+
+### Optional Resource Settings (v2.0)
+
+Each task in the workflow has configurable disk, memory, CPU, and preemptible settings. These are all optional and have sensible defaults that work well for typical TCGA BAM files up to ~40 GB. The naming convention is `{task}_{resource}`, for example `download_disk_gb`, `index_memory_gb`, `split_cpu`, or `fastq_preemptible`.
+
+Task | Disk (GB) | Memory (GB) | CPU | Preemptible
+| :--- | :---: | :---: | :---: | :---: |
+download | 50 | 4 | 2 | 1
+index | 50 | 4 | 1 | 3
+split | 100 | 4 | 2 | 3
+fastq | 50 | 8 | 2 | 3
+merge | 100 | 4 | 1 | 3
+
+If your BAM files are larger than ~40 GB, increase the disk sizes accordingly. The split task needs roughly 2x the BAM size, and the merge task needs roughly 2x the total FASTQ output size.
 
 ## Outputs
 Output Name | Type | Description
@@ -33,6 +64,32 @@ Output Name | Type | Description
 GDC_Samtools_Fastq.merged_r1 | File | Single merged Read 1 FASTQ file (gzipped).
 GDC_Samtools_Fastq.merged_r2 | File | Single merged Read 2 FASTQ file (gzipped).
 
+## Migrating from v1.x to v2.0
+
+1) Upload your GDC token file to your Terra workspace bucket.
+2) Set the new `gdc_token` workflow input to point to your uploaded token file.
+3) Point `sample_id` to the same data table column you previously used for `input_bam` — DRS URIs work as-is.
+4) (Optional) Adjust resource and preemptible settings for your sample sizes. The defaults work well for BAM files up to ~40 GB.
+
+## Understanding Preemptible VMs
+
+Preemptible (spot) VMs are spare Google Cloud machines that cost 60-91% less than standard VMs. The tradeoff is that Google can reclaim them at any time, which kills your running task. Terra will automatically retry.
+
+The preemptible value controls how many times Terra retries on a cheap VM before falling back to a guaranteed standard VM. For example, `preemptible = 3` means try up to 3 times on cheap VMs, then run on a standard VM if all attempts are interrupted.
+
+Guidelines for setting preemptible values:
+- Short tasks (under 1 hour): `preemptible = 3` is recommended and saves significant cost.
+- The download task: `preemptible = 1` is recommended since a preemption means re-downloading the entire BAM file.
+- Long-running tasks (6+ hours): `preemptible = 0` may save time since each retry starts from scratch.
+
+## Running on Terra (v2.0)
+
+ 1) Push this repository to GitHub.
+ 2) Register the workflow on [Dockstore](https://dockstore.org/).
+ 3) Click "Launch with Terra" if available. If not, manually import using the following URL: [https://app.terra.bio/#import-workflow/dockstore/github.com/AmyOlex/gdc-samtools-fastq/gdc-samtools-fastq:main](https://app.terra.bio/#import-workflow/dockstore/github.com/AmyOlex/gdc-samtools-fastq/gdc-samtools-fastq:main)
+ 4) Download your GDC token from the [GDC Data Portal](https://portal.gdc.cancer.gov/) and upload it to your workspace bucket.
+ 5) In your workflow configuration, set `sample_id` to your data table column containing DRS URIs and `gdc_token` to the uploaded token file.
+ 6) (Optional) Adjust disk, memory, and preemptible settings based on your BAM file sizes.
 
 ## Standard Local Testing (Dockstore CLI)
 
@@ -121,13 +178,6 @@ java -Dconfig.file=cromwell.conf \
   --inputs local_inputs.json
 ```
 
-## Running on Terra
- 1) Push this repository to GitHub.
- 2) Register the workflow on [Dockstore](https://dockstore.org/).
- 3) Click "Launch with Terra" if availiable.  If not, manually import using the following URL: [https://app.terra.bio/#import-workflow/dockstore/github.com/AmyOlex/gdc-samtools-fastq/gdc-samtools-fastq:main](https://app.terra.bio/#import-workflow/dockstore/github.com/AmyOlex/gdc-samtools-fastq/gdc-samtools-fastq:main)
- 4) In Terra, upload your BAM files to the workspace bucket and update the inputs to point to gs://... locations.
- 5) For GDC bam files, follow these instrcutions to generate a dri_uri, and utilize that as your input BAM file: [Link GDC Data](https://app.terra.bio/#workspaces/fc-product-demo/CRDC-Dynamic-Queries-for-NIH-Genomic-Data-Commons-Projects)
-
 ## Author
 Name: Amy Olex
 
@@ -135,8 +185,8 @@ Contact: alolex@vcu.edu
 
 Affiliation: Virginia Commonwealth University
 
-## License: 
+## License
 [GNU General Public License v3.0](https://github.com/AmyOlex/gdc-samtools-fastq/blob/main/LICENSE)
 
 ## Gen AI Disclaimer
-Gemini Pro in Thinking Mode using VCU's secure account was utilized in Dec 2025 to assist in the development of this workflow and writing of documentation. All code and documentation was manually reviewed, edited and tested by the author. 
+Gemini Pro in Thinking Mode using VCU's secure account was utilized in Dec 2025 to assist in the development of this workflow and writing of documentation. Claude Opus 4.6 via claude.ai was utilized in Feb 2026 to debug the GDC GCS bucket issue and develop the v2.0 HTTPS download edition. All code and documentation was manually reviewed, edited and tested by the author.
