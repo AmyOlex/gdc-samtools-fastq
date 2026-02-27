@@ -1,26 +1,96 @@
 version 1.0
 
+# =============================================================================
+# GDC_Samtools_Fastq v2.0 - HTTPS Download Edition
+# =============================================================================
+# This version downloads BAM files directly from the GDC HTTPS API instead of
+# relying on DRS resolution to Google Cloud Storage buckets.
+#
+# Use this version when:
+#   - GDC GCS buckets are unavailable or decommissioned
+#   - DRS resolution is failing on Terra
+#   - You prefer explicit control over the download method
+#
+# For the DRS/GCS version (requires working GDC GCS buckets), see v1.x tags.
+# =============================================================================
+
+
 workflow GDC_Samtools_Fastq {
   input {
-    File input_bam
+    # DRS URI or bare UUID for the BAM file
+    # Accepts either format:
+    #   "drs://dg.4DFC:008b411e-7de8-46f2-9ad8-185cd49ee2e6"
+    #   "008b411e-7de8-46f2-9ad8-185cd49ee2e6"
+    String sample_id
+
+    # GDC token file for authenticated downloads
+    File gdc_token
+
     # DEFAULT FOR TERRA: Use the public, pinned version
     String docker_image = "staphb/samtools:1.22"
+
+    # Preemptible retry attempts per task (0 = always use standard VMs)
+    Int download_preemptible = 1
+    Int index_preemptible = 3
+    Int split_preemptible = 3
+    Int fastq_preemptible = 3
+    Int merge_preemptible = 3
+
+    # Resource settings per task
+    Int download_disk_gb = 50
+    Int download_memory_gb = 4
+    Int download_cpu = 2
+
+    Int index_disk_gb = 50
+    Int index_memory_gb = 4
+    Int index_cpu = 1
+
+    Int split_disk_gb = 100
+    Int split_memory_gb = 4
+    Int split_cpu = 2
+
+    Int fastq_disk_gb = 50
+    Int fastq_memory_gb = 8
+    Int fastq_cpu = 2
+
+    Int merge_disk_gb = 100
+    Int merge_memory_gb = 4
+    Int merge_cpu = 1
   }
 
+  # 0. Download BAM from GDC HTTPS API
+  call DownloadFromGDC {
+    input:
+      sample_id = sample_id,
+      gdc_token = gdc_token,
+      docker = docker_image,
+      disk_gb = download_disk_gb,
+      memory_gb = download_memory_gb,
+      cpu = download_cpu,
+      preemptible = download_preemptible
+  }
   # 1. Index BAM file
   call IndexBam {
     input:
-      bam = input_bam,
-      docker = docker_image
+      bam = DownloadFromGDC.bam,
+      docker = docker_image,
+      disk_gb = index_disk_gb,
+      memory_gb = index_memory_gb,
+      cpu = index_cpu,
+      preemptible = index_preemptible
   }
   
   # 2. Split the BAM by Read Group (RG)
   # This is critical for GDC BAMs which often contain multiple lanes
   call SplitBamByRG {
     input:
-      bam = input_bam,
+      bam = DownloadFromGDC.bam,
       bai = IndexBam.bai,
-      docker = docker_image
+      docker = docker_image,
+      disk_gb = split_disk_gb,
+      memory_gb = split_memory_gb,
+      cpu = split_cpu,
+      preemptible = split_preemptible
   }
 
   # 3. Convert each split BAM into FASTQ pairs (Parallel Scatter)
@@ -28,7 +98,11 @@ workflow GDC_Samtools_Fastq {
     call BamToFastq {
       input:
         bam = split_bam,
-        docker = docker_image
+        docker = docker_image,
+        disk_gb = fastq_disk_gb,
+        memory_gb = fastq_memory_gb,
+        cpu = fastq_cpu,
+        preemptible = fastq_preemptible
     }
   }
 
@@ -37,8 +111,12 @@ workflow GDC_Samtools_Fastq {
     input:
       r1_files = BamToFastq.r1,
       r2_files = BamToFastq.r2,
-      base_name = basename(input_bam, ".bam"),
-      docker = docker_image
+      base_name = basename(DownloadFromGDC.bam, ".bam"),
+      docker = docker_image,
+      disk_gb = merge_disk_gb,
+      memory_gb = merge_memory_gb,
+      cpu = merge_cpu,
+      preemptible = merge_preemptible
   }
 
   output {
@@ -47,11 +125,60 @@ workflow GDC_Samtools_Fastq {
   }
 }
 
+
+# TASK 0: Download BAM from GDC HTTPS API
+task DownloadFromGDC {
+  input {
+    String sample_id
+    File gdc_token
+    String docker
+    Int disk_gb
+    Int memory_gb
+    Int cpu
+    Int preemptible
+  }
+
+  command <<<
+    set -e
+
+    # Extract UUID: handle both DRS URIs and bare UUIDs
+    UUID=$(echo "~{sample_id}" | sed 's/.*://')
+    echo "Resolved UUID: ${UUID}"
+
+    # Download BAM from GDC HTTPS API
+    echo "Downloading from https://api.gdc.cancer.gov/data/${UUID}"
+    curl -f -L \
+      -H "X-Auth-Token: $(cat ~{gdc_token})" \
+      -o "${UUID}.bam" \
+      "https://api.gdc.cancer.gov/data/${UUID}"
+
+    echo "Download complete. File size:"
+    ls -lh "${UUID}.bam"
+  >>>
+
+  runtime {
+    docker: docker
+    memory: "~{memory_gb} GB"
+    cpu: cpu
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible
+  }
+
+  output {
+    File bam = glob("*.bam")[0]
+  }
+}
+
+
 # TASK 1: Index BAM file
 task IndexBam {
   input {
     File bam
     String docker
+    Int disk_gb
+    Int memory_gb
+    Int cpu
+    Int preemptible
   }
 
   # Calculate basename so we can symlink with the correct original name
@@ -69,9 +196,10 @@ task IndexBam {
 
   runtime {
     docker: docker
-    memory: "4 GB"
-    cpu: 1
-    disks: "local-disk 50 HDD" # Ensure enough disk space for the BAM
+    memory: "~{memory_gb} GB"
+    cpu: cpu
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible
   }
 
   output {
@@ -86,6 +214,10 @@ task SplitBamByRG {
     File bam
     File bai
     String docker
+    Int disk_gb
+    Int memory_gb
+    Int cpu
+    Int preemptible
   }
 
   String filename = basename(bam)
@@ -105,9 +237,10 @@ task SplitBamByRG {
 
   runtime {
     docker: docker
-    memory: "4 GB"
-    cpu: 2
-    disks: "local-disk 100 HDD"
+    memory: "~{memory_gb} GB"
+    cpu: cpu
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible
   }
 
   output {
@@ -121,6 +254,10 @@ task BamToFastq {
   input {
     File bam
     String docker
+    Int disk_gb
+    Int memory_gb
+    Int cpu
+    Int preemptible
   }
 
   # Extract the filename base (e.g., "sample_RG1.bam" -> "sample_RG1")
@@ -151,9 +288,10 @@ task BamToFastq {
 
   runtime {
     docker: docker
-    memory: "8 GB" # Increased for safety with larger GDC files
-    cpu: 2
-    disks: "local-disk 50 HDD"
+    memory: "~{memory_gb} GB"
+    cpu: cpu
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible
   }
 
   output {
@@ -169,6 +307,10 @@ task MergeFastqs {
     Array[File] r2_files
     String base_name
     String docker
+    Int disk_gb
+    Int memory_gb
+    Int cpu
+    Int preemptible
   }
 
   command <<<
@@ -180,9 +322,10 @@ task MergeFastqs {
 
   runtime {
     docker: docker
-    memory: "4 GB"
-    cpu: 1
-    disks: "local-disk 100 HDD"
+    memory: "~{memory_gb} GB"
+    cpu: cpu
+    disks: "local-disk ~{disk_gb} HDD"
+    preemptible: preemptible
   }
 
   output {
