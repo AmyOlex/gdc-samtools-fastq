@@ -141,6 +141,9 @@ task DownloadFromGDC {
   command <<<
     set -e
 
+    # Install curl (not included in the samtools image)
+    apt-get update && apt-get install -y curl
+
     # Extract UUID: handle both DRS URIs and bare UUIDs
     UUID=$(echo "~{sample_id}" | sed 's/.*://')
     echo "Resolved UUID: ${UUID}"
